@@ -7,16 +7,20 @@
 #include <vector>
 
 //Global Variables
-double pos_x=0.0;
-double pos_z=0.0;
-double pos_y=0.0;
+class Position
+{
+  public:
+  double x;
+  double z;
+  double y;
+}pos;
 
 void poseCallback(geometry_msgs::Pose msg)
 {
   //ROS_INFO("I heard: \nx = [%f]\ny = [%f]\nz = [%f]", msg.position.x, msg.position.y, msg.position.z);
-  pos_x=msg.position.x;
-  pos_y=msg.position.y;
-  pos_z=msg.position.z;
+  pos.x = msg.position.x;
+  pos.y = msg.position.y;
+  pos.z = msg.position.z;
 }
 
 int main( int argc, char** argv )
@@ -26,7 +30,7 @@ int main( int argc, char** argv )
   ros::Publisher marker_pub = n.advertise<visualization_msgs::Marker>("visualization_marker", 10);
   ros::Subscriber sub = n.subscribe("pose/linear", 1000, poseCallback);
 
-  ros::Rate r(30);
+  ros::Rate rate(0.5);
 
 ///////////////////////////////////////////////////
 //  Initializing Markers
@@ -46,9 +50,17 @@ int main( int argc, char** argv )
   tube.header.stamp = ros::Time::now();
   tube.ns = "tube";
   tube.action = visualization_msgs::Marker::ADD;
-  tube.pose.orientation.w = 1.0;
-  tube.id = 1;
+  tube.id = 0;
   tube.type = visualization_msgs::Marker::CYLINDER;
+  // Sphere initialization
+  visualization_msgs::Marker sphere;
+  sphere.header.frame_id = "/frame";
+  sphere.header.stamp = ros::Time::now();
+  sphere.ns = "sphere";
+  sphere.action = visualization_msgs::Marker::ADD;
+  sphere.pose.orientation.w = 1.0;
+  sphere.id = 0;
+  sphere.type = visualization_msgs::Marker::SPHERE;
 
   // 1 = 1 meter
   points.scale.x = 0.05;
@@ -56,11 +68,16 @@ int main( int argc, char** argv )
   tube.scale.x = 0.3;
   tube.scale.y = 0.3;
   tube.scale.z = 1.0;
+  sphere.scale.x = 0.3;
+  sphere.scale.y = 0.3;
+  sphere.scale.z = 0.3;
   // Color
   points.color.g = 1.0f;
   points.color.a = 1.0;
   tube.color.b = 1.0f;
   tube.color.a = 0.5;
+  sphere.color.b = 1.0f;
+  sphere.color.a = 0.5;
 
 ///////////////////////////////////////////////////
 //  Initializing Variables
@@ -74,39 +91,38 @@ int main( int argc, char** argv )
   double tube_list[10000][8];
   double v1[3];
   double v2[3];
-  double angle;
-  double old_angle = 0.0;
-  double sum_angle = 0.0;
-  double dist_ini = sqrt(pos_x*pos_x+pos_y*pos_y+pos_z*pos_z);
-  double dist_fi = dist_ini;
+  double roll=0.0, pitch, yaw=0.0;
+  double old_dot = 0.0;
+  double dot_quat = 0.0;
+  double dist_ini = 0.0;
+  double dist_fi = 0.0;
   double p_ini[3] = {0.0,0.0,0.0};
   double p_fi[3] = {0.0,0.0,0.0};
   bool turn = false;
   bool plot = false;
-  // Tube Marker Orientation (set up initial rotation)
-  tf::Quaternion q;
-  q=tf::createQuaternionFromRPY(0.0,M_PI/2,0.0);
-  tube_list[0][4] = q[0];
-  tube_list[0][5] = q[1];
-  tube_list[0][6] = q[2];
-  tube_list[0][7] = q[3];
+  geometry_msgs::Point p;
 
-// First tube orientation
+  // Tube Marker Orientation (set up initial rotation)
+  tf::Quaternion q_ini;
+  tf::Quaternion q_fi;
+  q_ini = tf::createQuaternionFromRPY(0.0,M_PI/2,0.0);
+  tube_list[0][4] = q_ini[0];
+  tube_list[0][5] = q_ini[1];
+  tube_list[0][6] = q_ini[2];
+  tube_list[0][7] = q_ini[3];
 
   while (ros::ok())
   {
 ///////////////////////////////////////////////////
-//  List of trajectory points
+//  List of trajectory points and publication
 ///////////////////////////////////////////////////    
     if (j == 10001) j = 0;
     
-    list_x[j]=pos_x;
-    list_y[j]=pos_y;
-    list_z[j]=pos_z;
+    list_x[j]=pos.x;
+    list_y[j]=pos.y;
+    list_z[j]=pos.z;
 
-    geometry_msgs::Point p;
-
-    for (int i=0;i<j;i++)
+    for (int i=0;i<=j;i++)
     {
         p.x = list_x[i];
         p.y = list_y[i];
@@ -125,26 +141,40 @@ int main( int argc, char** argv )
 */
     if (j > 1 && turn == false)
     {
+	
         v1[0] = list_x[j]-list_x[j-1];
         v1[1] = list_y[j]-list_y[j-1];
 	v1[2] = list_z[j]-list_z[j-1];
 	v2[0] = list_x[j-1]-list_x[j-2];
 	v2[1] = list_y[j-1]-list_y[j-2];
 	v2[2] = list_z[j-1]-list_z[j-2];
-	angle = acos((v1[0]*v2[0]+v1[1]*v2[1]+v1[2]*v2[2])/(sqrt(v1[0]*v1[0]+v1[1]*v1[1]+v1[2]*v1[2])*sqrt(v2[0]*v2[0]+v2[1]*v2[1]+v2[2]*v2[2])));
 	
-	ROS_INFO("\nAngle = [%f]", angle);
-	if (fabs(angle) == 0.0 && fabs(old_angle) > 0.01)
+	// atan2(cross(v1,v2),dot(v1,v2)) -> atan2(sin,cos)
+	// Rotation around X-axis -> Roll 
+	roll = atan2(v1[1]*v2[2]-v1[2]*v2[1],v1[1]*v2[1]+v1[2]*v2[2]);
+	// Rotation around Y-axis -> Pitch 
+	pitch = atan2(v1[0]*v2[2]-v1[2]*v2[0],v1[0]*v2[0]+v1[2]*v2[2]);
+	// Rotation around Z-axis -> Yaw 
+	yaw = atan2(v1[0]*v2[1]-v1[1]*v2[0],v1[0]*v2[0]+v1[1]*v2[1]);
+
+	q_fi = tf::createQuaternionFromRPY(roll,pitch,yaw);
+	
+	// if angles are different, dot(q_ini,1_fi) != 0
+	//dot_quat = (2*pow(q_ini[0]*q_fi[0]+q_ini[1]*q_fi[1]+q_ini[2]*q_fi[2]+q_ini[3]*q_fi[3],2)-1);
+	dot_quat = roll+pitch+yaw;
+	ROS_INFO("Dot Product = [%f]", dot_quat);
+	if (fabs(dot_quat) == 0.0 && fabs(old_dot) > 0.01)
 	{
 	    turn = true;
-	    old_angle = 0;
+	    old_dot = 0;
 	    ROS_INFO("ARA SI");
 	}
-	else if (fabs(angle) > 0.01) 
+
+	else if (fabs(dot_quat) > 0.01) 
 	{
 	    cont++;
-	    old_angle = angle;
-	    sum_angle += angle; 
+	    q_ini = q_ini*q_fi;
+	    old_dot = dot_quat;
 	}
     }
 ///////////////////////////////////////////////////
@@ -169,7 +199,7 @@ int main( int argc, char** argv )
  */
     if (dist_fi-dist_ini >= 1.0 && turn == false) 
     {
-	dist_ini = sqrt(pos_x*pos_x+pos_y*pos_y+pos_z*pos_z);
+	dist_ini = sqrt(list_x[j]*list_x[j]+list_y[j]*list_y[j]+list_z[j]*list_z[j]);
 	dist_fi = dist_ini;
 	p_fi[0] = list_x[j];
 	p_fi[1] = list_y[j];
@@ -193,27 +223,24 @@ int main( int argc, char** argv )
 	tube_list[k][2]	= (list_z[j-cont]+p_ini[2])/2;
 	tube_list[k][3] = sqrt(pow(list_x[j-cont]-p_ini[0],2)+pow(list_y[j-cont]-p_ini[1],2)+pow(list_z[j-cont]-p_ini[2],2));
 	// Next Tube orientation
-	q=tf::createQuaternionFromRPY(0.0,sum_angle,0.0);
-	tube_list[k+1][4] = q[0];
-	tube_list[k+1][5] = q[1];
-	tube_list[k+1][6] = q[2];
-	tube_list[k+1][7] = q[3];
+	tube_list[k+1][4] = q_ini[0];
+	tube_list[k+1][5] = q_ini[1];
+	tube_list[k+1][6] = q_ini[2];
+	tube_list[k+1][7] = q_ini[3];
 	dist_ini = sqrt(list_x[j-cont]*list_x[j-cont]+list_y[j-cont]*list_y[j-cont]+list_z[j-cont]*list_z[j-cont]);
 	dist_fi = dist_ini;
 	p_ini[0] = list_x[j-cont];
 	p_ini[1] = list_y[j-cont];
 	p_ini[2] = list_z[j-cont];
 
-
         plot = true;
-	cont = 1;
     }
-    else dist_fi = sqrt(pos_x*pos_x+pos_y*pos_y+pos_z*pos_z);
+    else dist_fi = sqrt(list_x[j]*list_x[j]+list_y[j]*list_y[j]+list_z[j]*list_z[j]);
 
-//  Publishing last tub
+    //  Publishing last tub
     if(plot == true)
     {
-	tube.id = k+1;
+	tube.id = k;
 	tube.pose.position.x = tube_list[k][0];
     	tube.pose.position.y = tube_list[k][1];
     	tube.pose.position.z = tube_list[k][2];
@@ -226,12 +253,23 @@ int main( int argc, char** argv )
 	plot = false;
     }
     
-//  If a turn have occured, it is increased the number of tubes (k) and turn becomes false again.
-    if (turn == true){k++; turn = false;}
-//  Increasing nuber of points of the trajectory (j)
-    j++;
-
+    //  If a turn have occured, it is increased the number of tubes (k) and turn becomes false again.
+    if (turn == true)
+    {
+	sphere.id = k;
+	sphere.pose.position.x = list_x[j-cont];
+	sphere.pose.position.y = list_y[j-cont];
+	sphere.pose.position.z = list_z[j-cont];
+    	marker_pub.publish(sphere);
+	k++; 
+	cont = 1;
+	turn = false;
+    }
     ROS_INFO("\nx = [%f]\ny = [%f]\nz = [%f]", list_x[j],list_y[j],list_z[j]);
+
+    //  Increasing number of points of the trajectory (j)
+    j++;
+    
     sleep(1);
 
     if (!ros::ok())
