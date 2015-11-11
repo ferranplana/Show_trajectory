@@ -91,9 +91,9 @@ int main( int argc, char** argv )
   double tube_list[10000][8];
   double v1[3];
   double v2[3];
-  double roll=0.0, pitch, yaw=0.0;
-  double old_dot = 0.0;
-  double dot_quat = 0.0;
+  double pitch = M_PI/2, yaw = 0;
+  double old_sum = 0.0;
+  double sum = 0.0;
   double dist_ini = 0.0;
   double dist_fi = 0.0;
   double p_ini[3] = {0.0,0.0,0.0};
@@ -105,7 +105,8 @@ int main( int argc, char** argv )
   // Tube Marker Orientation (set up initial rotation)
   tf::Quaternion q_ini;
   tf::Quaternion q_fi;
-  q_ini = tf::createQuaternionFromRPY(0.0,M_PI/2,0.0);
+  tf::Quaternion q_;
+  q_ini = tf::createQuaternionFromRPY(0.0,pitch,yaw);
   tube_list[0][4] = q_ini[0];
   tube_list[0][5] = q_ini[1];
   tube_list[0][6] = q_ini[2];
@@ -151,30 +152,36 @@ int main( int argc, char** argv )
 	
 	// atan2(cross(v1,v2),dot(v1,v2)) -> atan2(sin,cos)
 	// Rotation around X-axis -> Roll 
-	roll = atan2(v1[1]*v2[2]-v1[2]*v2[1],v1[1]*v2[1]+v1[2]*v2[2]);
+	//roll = atan2(v1[1]*v2[2]-v1[2]*v2[1],v1[1]*v2[1]+v1[2]*v2[2]);
 	// Rotation around Y-axis -> Pitch 
 	pitch = atan2(v1[0]*v2[2]-v1[2]*v2[0],v1[0]*v2[0]+v1[2]*v2[2]);
 	// Rotation around Z-axis -> Yaw 
-	yaw = atan2(v1[0]*v2[1]-v1[1]*v2[0],v1[0]*v2[0]+v1[1]*v2[1]);
+	yaw = atan2(v1[1]*v2[0]-v1[0]*v2[1],v1[0]*v2[0]+v1[1]*v2[1]);
 
-	q_fi = tf::createQuaternionFromRPY(roll,pitch,yaw);
+	q_fi = tf::createQuaternionFromRPY(0.0,pitch,yaw);
 	
-	// if angles are different, dot(q_ini,1_fi) != 0
-	//dot_quat = (2*pow(q_ini[0]*q_fi[0]+q_ini[1]*q_fi[1]+q_ini[2]*q_fi[2]+q_ini[3]*q_fi[3],2)-1);
-	dot_quat = roll+pitch+yaw;
-	ROS_INFO("Dot Product = [%f]", dot_quat);
-	if (fabs(dot_quat) == 0.0 && fabs(old_dot) > 0.01)
+	sum = pitch+yaw;
+	ROS_INFO("Sum Angle = [%f]", sum);
+	if (fabs(sum) <= 0.0001 && fabs(old_sum) > 0.0001)
 	{
 	    turn = true;
-	    old_dot = 0;
+	    old_sum = 0;
 	    ROS_INFO("ARA SI");
 	}
 
-	else if (fabs(dot_quat) > 0.01) 
+	else if (fabs(sum) > 0.0001) 
 	{
 	    cont++;
-	    q_ini = q_ini*q_fi;
-	    old_dot = dot_quat;
+	    q_ = q_ini;
+	    q_ini[3] = q_[3]*q_fi[3]-(q_[0]*q_fi[0]+q_[1]*q_fi[1]+q_[2]*q_fi[2]);
+
+	    q_ini[0] = q_[3]*q_fi[0] + q_fi[3]*q_[0] + q_[1]*q_fi[2]-q_[2]*q_fi[1];
+
+	    q_ini[1] = q_[3]*q_fi[1] + q_fi[3]*q_[1] + q_[2]*q_fi[0]-q_[0]*q_fi[2];
+
+	    q_ini[2] = q_[3]*q_fi[2] + q_fi[3]*q_[2] + q_[0]*q_fi[1]-q_[1]*q_fi[0];
+
+	    old_sum = sum;
 	}
     }
 ///////////////////////////////////////////////////
