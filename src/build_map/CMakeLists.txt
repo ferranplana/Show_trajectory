@@ -36,8 +36,10 @@ include_directories(  ${catkin_INCLUDE_DIRS} )
 
 add_executable(shapes src/shapes.cpp)
 add_executable(pose src/pose.cpp)
+add_executable(aleatory_pose src/aleatory_pose.cpp)
 
 
 target_link_libraries(shapes ${catkin_LIBRARIES})
 target_link_libraries(pose ${catkin_LIBRARIES})
+target_link_libraries(aleatory_pose ${catkin_LIBRARIES})
 
